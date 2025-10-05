@@ -1,0 +1,316 @@
+project:
+  name: WeatherStationDataBridge
+  description: Lightweight Python application that fetches weather data from WeatherUnderground stations and forwards it to Windy.com every 5 minutes
+  version: 1.0.0
+  metadata:
+    dsl_version: '2.0'
+    author: 'Weather Data Integration Team'
+    license: 'MIT'
+    runtime: 'python3.9+'
+    resource_profile: 'low'
+
+domain:
+  Configuration:
+    windy_api_key: string
+    wu_api_key: string
+    wu_station_ids: array[string]
+    sync_interval_minutes: int
+    log_level: enum[DEBUG, INFO, WARNING, ERROR]
+    retry_attempts: int
+    retry_delay_seconds: int
+
+  WeatherUndergroundStation:
+    station_id: string
+    name: string
+    latitude: float
+    longitude: float
+    elevation: optional[float]
+
+  WeatherObservation:
+    station_id: string
+    timestamp: datetime
+    temperature_c: optional[float]
+    temperature_f: optional[float]
+    wind_speed_mps: optional[float]
+    wind_speed_mph: optional[float]
+    wind_direction_deg: optional[int]
+    wind_gust_mps: optional[float]
+    wind_gust_mph: optional[float]
+    humidity_percent: optional[float]
+    dewpoint_c: optional[float]
+    dewpoint_f: optional[float]
+    pressure_pa: optional[float]
+    pressure_mbar: optional[float]
+    pressure_inhg: optional[float]
+    precipitation_mm: optional[float]
+    precipitation_in: optional[float]
+    uv_index: optional[float]
+
+  WindyStationInfo:
+    station_index: int
+    name: string
+    latitude: float
+    longitude: float
+    elevation: optional[float]
+    temp_height: optional[float]
+    wind_height: optional[float]
+
+  WindyObservation:
+    station_index: int
+    timestamp: string
+    temp: optional[float]
+    tempf: optional[float]
+    wind: optional[float]
+    windspeedmph: optional[float]
+    winddir: optional[int]
+    gust: optional[float]
+    windgustmph: optional[float]
+    rh: optional[float]
+    dewpoint: optional[float]
+    pressure: optional[float]
+    mbar: optional[float]
+    baromin: optional[float]
+    precip: optional[float]
+    rainin: optional[float]
+    uv: optional[float]
+
+  SyncResult:
+    station_id: string
+    success: boolean
+    timestamp: datetime
+    error_message: optional[string]
+    observations_sent: int
+
+logic:
+  LoadConfiguration:
+    inputs: []
+    output: Configuration
+    preconditions:
+      - env_vars_present: 'Required environment variables must be set'
+    errors: [MissingConfiguration, InvalidConfiguration]
+
+  FetchWeatherUndergroundData:
+    inputs: [wu_api_key, station_id]
+    output: WeatherObservation
+    errors:
+      [
+        APIConnectionError,
+        AuthenticationError,
+        StationNotFound,
+        RateLimitExceeded,
+      ]
+
+  TransformToWindyFormat:
+    inputs: [observation, station_index]
+    output: WindyObservation
+    preconditions:
+      - valid_observation: 'observation must contain at least one measurement'
+    postconditions:
+      - format_valid: 'output conforms to Windy API specification'
+
+  SendToWindy:
+    inputs: [windy_api_key, windy_observation]
+    output: boolean
+    errors: [APIConnectionError, AuthenticationError, InvalidData]
+
+  GetStationMetadata:
+    inputs: [wu_api_key, station_id]
+    output: WeatherUndergroundStation
+    errors: [APIConnectionError, StationNotFound]
+
+  RegisterWindyStation:
+    inputs: [windy_api_key, station_info]
+    output: boolean
+    errors: [APIConnectionError, StationAlreadyExists]
+
+  ExecuteSyncCycle:
+    inputs: [config]
+    output: array[SyncResult]
+    modifies: SyncResult
+    preconditions:
+      - config_valid: 'configuration must be complete and valid'
+    postconditions:
+      - all_stations_processed: 'all stations attempted sync'
+    errors: [ConfigurationError, SyncError]
+
+  RetryWithBackoff:
+    inputs: [operation, max_attempts, delay_seconds]
+    output: boolean
+    errors: [MaxRetriesExceeded]
+
+components:
+  - id: config_loader
+    type: module
+    language: python
+    responsibilities: [LoadConfiguration]
+    dependencies: []
+    implementation_notes:
+      - Use python-dotenv for .env file support
+      - Validate all required environment variables at startup
+      - Provide sensible defaults where appropriate
+
+  - id: wu_client
+    type: module
+    language: python
+    responsibilities: [FetchWeatherUndergroundData, GetStationMetadata]
+    dependencies: [config_loader]
+    implementation_notes:
+      - Use requests library for HTTP calls
+      - Implement connection pooling for efficiency
+      - Handle rate limiting gracefully
+      - Cache station metadata to reduce API calls
+
+  - id: data_transformer
+    type: module
+    language: python
+    responsibilities: [TransformToWindyFormat]
+    dependencies: []
+    implementation_notes:
+      - Handle unit conversions (F to C, mph to m/s, etc.)
+      - Preserve all available data fields
+      - Format timestamps according to Windy requirements
+
+  - id: windy_client
+    type: module
+    language: python
+    responsibilities: [SendToWindy, RegisterWindyStation]
+    dependencies: [config_loader]
+    implementation_notes:
+      - Support both GET and POST methods
+      - Use POST JSON for multiple stations
+      - Implement retry logic with exponential backoff
+      - Handle API errors gracefully
+
+  - id: sync_orchestrator
+    type: service
+    language: python
+    responsibilities: [ExecuteSyncCycle, RetryWithBackoff]
+    dependencies: [wu_client, data_transformer, windy_client, config_loader]
+    implementation_notes:
+      - Use asyncio for concurrent station processing
+      - Log all sync attempts and results
+      - Implement health monitoring
+      - Graceful shutdown on SIGTERM/SIGINT
+
+  - id: scheduler
+    type: service
+    language: python
+    responsibilities: []
+    dependencies: [sync_orchestrator]
+    implementation_notes:
+      - Use APScheduler or simple time.sleep loop
+      - Ensure only one sync runs at a time
+      - Handle clock skew and DST transitions
+      - Low CPU usage between syncs
+
+workflow:
+  - name: InitialSetup
+    trigger: manual
+    steps:
+      - call: LoadConfiguration
+      - parallel:
+          - call: GetStationMetadata
+            for_each: wu_station_ids
+          - call: RegisterWindyStation
+            for_each: stations
+    error_handling:
+      strategy: fail_fast
+      on_error: log_and_exit
+
+  - name: DataSyncCycle
+    trigger: schedule
+    schedule: '*/5 * * * *'
+    steps:
+      - call: LoadConfiguration
+      - parallel:
+          - sequence:
+              - call: FetchWeatherUndergroundData
+              - call: TransformToWindyFormat
+              - call: RetryWithBackoff
+                params:
+                  operation: SendToWindy
+                  max_attempts: config.retry_attempts
+                  delay_seconds: config.retry_delay_seconds
+        for_each: wu_station_ids
+        max_concurrent: 2
+      - call: ExecuteSyncCycle
+      - log: SyncResult
+    error_handling:
+      strategy: continue
+      on_error: log_and_continue
+      timeout_seconds: 240
+
+infrastructure:
+  deployment:
+    type: container
+    regions: [any]
+    constraints:
+      - memory_mb: 128
+      - cpu_cores: 0.5
+      - disk_mb: 100
+    runtime:
+      image: python:3.9-slim
+      entrypoint: python main.py
+      health_check:
+        command: curl -f http://localhost:8080/health || exit 1
+        interval_seconds: 60
+        timeout_seconds: 10
+
+  resources:
+    - type: storage
+      config:
+        purpose: logs
+        retention_days: 7
+        max_size_mb: 100
+
+    - type: environment
+      config:
+        required_vars:
+          - WINDY_API_KEY
+          - WU_API_KEY
+          - WU_STATION_IDS
+        optional_vars:
+          - SYNC_INTERVAL_MINUTES
+          - LOG_LEVEL
+          - RETRY_ATTEMPTS
+          - RETRY_DELAY_SECONDS
+
+  dependencies:
+    python_packages:
+      - requests>=2.31.0
+      - python-dotenv>=1.0.0
+      - APScheduler>=3.10.0
+      - structlog>=23.1.0
+
+security:
+  authentication:
+    type: api_key
+    storage: environment_variables
+
+  authorization:
+    roles: [service_account]
+    permissions:
+      - role: service_account
+        resources: [WeatherUndergroundAPI, WindyAPI]
+        actions: [read, write]
+
+  data_protection:
+    - secrets: [windy_api_key, wu_api_key]
+      storage: environment_variables
+      transmission: https_only
+    - logging:
+        exclude_fields: [api_key, password, token]
+
+  network:
+    egress:
+      - destination: api.weather.com
+        protocol: https
+        port: 443
+      - destination: stations.windy.com
+        protocol: https
+        port: 443
+    ingress:
+      - port: 8080
+        protocol: http
+        purpose: health_check
+        access: localhost_only
