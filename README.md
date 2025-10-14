@@ -14,6 +14,7 @@ A lightweight Python application that fetches weather data from WeatherUndergrou
 - ✅ Transforms and forwards data to Windy.com
 - ✅ Configurable sync intervals (default: 5 minutes)
 - ✅ Automatic retry with exponential backoff
+- ✅ Timestamp deduplication to prevent duplicate API submissions
 - ✅ Concurrent processing of multiple stations
 - ✅ Health check endpoint for monitoring
 - ✅ Structured logging

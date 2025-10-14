@@ -21,6 +21,7 @@ def test_configuration_model():
         windy_api_key="test_windy",
         wu_api_key="test_wu",
         wu_station_ids=["KTEST1", "KTEST2"],
+        windy_station_ids=["1", "2"],
         sync_interval_minutes=10,
         log_level="DEBUG",
         retry_attempts=5,
@@ -30,6 +31,7 @@ def test_configuration_model():
     assert config.windy_api_key == "test_windy"
     assert config.wu_api_key == "test_wu"
     assert len(config.wu_station_ids) == 2
+    assert len(config.windy_station_ids) == 2
 
 
 def test_weather_observation_model():

@@ -47,7 +47,10 @@ def test_load_configuration_empty_station_ids(tmp_path, monkeypatch):
     # Create a test env file with empty station IDs
     test_env = tmp_path / "test.env"
     test_env.write_text(
-        "WINDY_API_KEY=test_key\n" "WU_API_KEY=test_key\n" "WU_STATION_IDS=\n"
+        "WINDY_API_KEY=test_key\n"
+        "WU_API_KEY=test_key\n"
+        "WU_STATION_IDS=\n"
+        "WINDY_STATION_IDS=1\n"
     )
 
     with pytest.raises(InvalidConfiguration, match="at least one station"):
@@ -62,6 +65,7 @@ def test_load_configuration_valid(tmp_path, monkeypatch):
         "WINDY_API_KEY=windy_key\n"
         "WU_API_KEY=wu_key\n"
         "WU_STATION_IDS=KTEST1,KTEST2,KTEST3\n"
+        "WINDY_STATION_IDS=1,2,3\n"
     )
 
     config = load_configuration(str(test_env))
@@ -69,6 +73,7 @@ def test_load_configuration_valid(tmp_path, monkeypatch):
     assert config.windy_api_key == "windy_key"
     assert config.wu_api_key == "wu_key"
     assert config.wu_station_ids == ["KTEST1", "KTEST2", "KTEST3"]
+    assert config.windy_station_ids == ["1", "2", "3"]
     assert config.sync_interval_minutes == 5
     assert config.log_level == "INFO"
     assert config.retry_attempts == 3
@@ -83,6 +88,7 @@ def test_load_configuration_with_optionals(tmp_path, monkeypatch):
         "WINDY_API_KEY=windy_key\n"
         "WU_API_KEY=wu_key\n"
         "WU_STATION_IDS=KTEST1\n"
+        "WINDY_STATION_IDS=1\n"
         "SYNC_INTERVAL_MINUTES=10\n"
         "LOG_LEVEL=DEBUG\n"
         "RETRY_ATTEMPTS=5\n"
@@ -105,6 +111,7 @@ def test_load_configuration_invalid_log_level(tmp_path, monkeypatch):
         "WINDY_API_KEY=windy_key\n"
         "WU_API_KEY=wu_key\n"
         "WU_STATION_IDS=KTEST1\n"
+        "WINDY_STATION_IDS=1\n"
         "LOG_LEVEL=INVALID\n"
     )
 

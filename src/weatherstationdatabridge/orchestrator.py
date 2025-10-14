@@ -13,6 +13,9 @@ from .wu_client import fetch_weather_underground_data
 
 logger = logging.getLogger(__name__)
 
+# Track last sent timestamp per station to avoid duplicate submissions
+_last_sent_timestamps: dict[str, datetime] = {}
+
 
 async def sync_station(
     station_id: str,
@@ -39,6 +42,19 @@ async def sync_station(
         observation = fetch_weather_underground_data(config.wu_api_key, station_id)
         logger.debug(f"Fetched observation for {station_id}")
 
+        # Skip if timestamp already sent (prevents duplicate submission warnings)
+        if _last_sent_timestamps.get(station_id) == observation.timestamp:
+            logger.info(
+                f"Skipping station {station_id}: observation already sent "
+                f"(timestamp {observation.timestamp})"
+            )
+            return SyncResult(
+                station_id=station_id,
+                success=True,
+                timestamp=start_time,
+                observations_sent=0,
+            )
+
         # Transform to Windy format (station_index is just for internal tracking, not used by API)
         windy_obs = transform_to_windy_format(observation, 0)
         logger.debug(f"Transformed observation for {station_id}")
@@ -57,6 +73,9 @@ async def sync_station(
         logger.info(
             f"Successfully synced station {station_id} → Windy {windy_station_id}"
         )
+
+        # Update last sent timestamp
+        _last_sent_timestamps[station_id] = observation.timestamp
 
         return SyncResult(
             station_id=station_id,

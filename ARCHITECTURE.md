@@ -54,6 +54,7 @@ weatherstationdatabridge/
 3. Sync Cycle (orchestrator.py)
    ├─> For each station (concurrent, max 2):
    │   ├─> Fetch WU Data (wu_client.py)
+   │   ├─> Check Last Sent Timestamp (deduplication)
    │   ├─> Transform Data (transformer.py)
    │   └─> Send to Windy with Retry (windy_client.py + retry.py)
    └─> Return Sync Results
@@ -104,6 +105,41 @@ run_scheduler(sync_executor, config.sync_interval_minutes)
    - Log exceptions
    - Wait before retry
    - Never crash service
+
+## Timestamp Deduplication
+
+To prevent duplicate API submissions and unnecessary warnings, the orchestrator maintains an in-memory cache of the last sent observation timestamp per station.
+
+### Mechanism
+
+```python
+_last_sent_timestamps: dict[str, datetime] = {}
+
+# Before sending
+if _last_sent_timestamps.get(station_id) == observation.timestamp:
+    logger.info(f"Skipping station {station_id}: observation already sent")
+    return  # Skip sending
+
+# After successful send
+_last_sent_timestamps[station_id] = observation.timestamp
+```
+
+### Benefits
+
+- **Prevents duplicate warnings**: Eliminates "timestamp already present" errors from Windy API
+- **Reduces API calls**: Skips submissions when weather station hasn't reported new data
+- **Handles stale data gracefully**: Weather stations with slow reporting (15+ min intervals) are handled efficiently
+- **Simple & stateless**: No persistence needed; acceptable to resend after app restart
+
+### Behavior
+
+```mermaid
+graph TD
+    A["Fetch Observation"] --> B{"Last Sent\n== Current?"}
+    B -->|Yes| C["Skip Send\n(INFO log)"]
+    B -->|No| D["Send to Windy"]
+    D --> E["Update Last Sent"]
+```
 
 ## Concurrency Model
 
@@ -168,6 +204,7 @@ config = Configuration(
 - Minimal state storage
 - Streaming data processing
 - Station metadata cached
+- Timestamp deduplication (~50 bytes per station)
 - **Target**: <128MB
 
 ### CPU Usage

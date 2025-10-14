@@ -45,6 +45,7 @@ WeatherStationDataBridge/
 - ✅ Send data to Windy.com API
 - ✅ Configurable 5-minute sync intervals
 - ✅ Automatic retry with exponential backoff
+- ✅ Timestamp deduplication to prevent duplicate submissions
 - ✅ Concurrent station processing (max 2 concurrent)
 - ✅ Station metadata caching
 
