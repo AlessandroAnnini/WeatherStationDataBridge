@@ -45,7 +45,7 @@ def test_weather_observation_model():
 
     assert obs.station_id == "KTEST123"
     assert obs.temperature_c == 20.0
-    assert obs.wind_speed_mps is None
+    assert obs.wind_speed_kmh is None
 
 
 def test_windy_observation_model():

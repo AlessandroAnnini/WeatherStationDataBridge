@@ -15,7 +15,7 @@ def test_transform_to_windy_format():
         timestamp=datetime(2025, 10, 5, 12, 0, 0),
         temperature_c=20.0,
         temperature_f=68.0,
-        wind_speed_mps=5.0,
+        wind_speed_kmh=18.0,  # Will be converted to 5.0 m/s in transformer
         wind_speed_mph=11.2,
         wind_direction_deg=180,
         humidity_percent=65.0,
@@ -28,7 +28,7 @@ def test_transform_to_windy_format():
     assert windy_obs.timestamp == "2025-10-05 12:00:00"
     assert windy_obs.temp == 20.0
     assert windy_obs.tempf == 68.0
-    assert windy_obs.wind == 5.0
+    assert abs(windy_obs.wind - 5.0) < 0.01  # 18 km/h ÷ 3.6 = 5.0 m/s
     assert windy_obs.windspeedmph == 11.2
     assert windy_obs.winddir == 180
     assert windy_obs.rh == 65.0

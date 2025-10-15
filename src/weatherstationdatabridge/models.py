@@ -30,16 +30,16 @@ class WeatherUndergroundStation(BaseModel):
 
 
 class WeatherObservation(BaseModel):
-    """Weather observation from Weather Underground."""
+    """Weather observation from Weather Underground (raw API format)."""
 
     station_id: str
     timestamp: datetime
     temperature_c: Optional[float] = None
     temperature_f: Optional[float] = None
-    wind_speed_mps: Optional[float] = None
+    wind_speed_kmh: Optional[float] = None  # WU API returns km/h for metric mode
     wind_speed_mph: Optional[float] = None
     wind_direction_deg: Optional[int] = None
-    wind_gust_mps: Optional[float] = None
+    wind_gust_kmh: Optional[float] = None  # WU API returns km/h for metric mode
     wind_gust_mph: Optional[float] = None
     humidity_percent: Optional[float] = None
     dewpoint_c: Optional[float] = None
@@ -47,9 +47,9 @@ class WeatherObservation(BaseModel):
     pressure_pa: Optional[float] = None
     pressure_mbar: Optional[float] = None
     pressure_inhg: Optional[float] = None
-    precipitation_mm: Optional[float] = None
-    precipitation_in: Optional[float] = None
-    uv_index: Optional[float] = None
+    precipitation_mm: Optional[float] = None  # Daily cumulative total
+    precipitation_in: Optional[float] = None  # Daily cumulative total
+    uv_index: Optional[float] = None  # WU API returns float
 
 
 class WindyStationInfo(BaseModel):
@@ -85,7 +85,7 @@ class WindyObservation(BaseModel):
     baromin: Optional[float] = None
     precip: Optional[float] = None
     rainin: Optional[float] = None
-    uv: Optional[float] = None
+    uv: Optional[int] = None  # Windy API expects integer UV index
 
 
 class SyncResult(BaseModel):

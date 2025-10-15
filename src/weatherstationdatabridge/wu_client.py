@@ -2,7 +2,6 @@
 
 import logging
 from datetime import datetime
-from typing import Optional
 
 import httpx
 
@@ -43,7 +42,7 @@ def fetch_weather_underground_data(
         StationNotFound: Station not found
         RateLimitExceeded: Rate limit exceeded
     """
-    url = f"https://api.weather.com/v2/pws/observations/current"
+    url = "https://api.weather.com/v2/pws/observations/current"
     params = {
         "stationId": station_id,
         "format": "json",
@@ -75,7 +74,7 @@ def fetch_weather_underground_data(
 
             obs = data["observations"][0]
 
-            # Parse observation data
+            # Parse observation data (raw from WU API)
             return WeatherObservation(
                 station_id=station_id,
                 timestamp=datetime.fromisoformat(
@@ -83,10 +82,10 @@ def fetch_weather_underground_data(
                 ),
                 temperature_c=obs.get("metric", {}).get("temp"),
                 temperature_f=obs.get("imperial", {}).get("temp"),
-                wind_speed_mps=obs.get("metric", {}).get("windSpeed"),
+                wind_speed_kmh=obs.get("metric", {}).get("windSpeed"),
                 wind_speed_mph=obs.get("imperial", {}).get("windSpeed"),
                 wind_direction_deg=obs.get("winddir"),
-                wind_gust_mps=obs.get("metric", {}).get("windGust"),
+                wind_gust_kmh=obs.get("metric", {}).get("windGust"),
                 wind_gust_mph=obs.get("imperial", {}).get("windGust"),
                 humidity_percent=obs.get("humidity"),
                 dewpoint_c=obs.get("metric", {}).get("dewpt"),
@@ -139,7 +138,7 @@ def get_station_metadata(
         logger.debug(f"Using cached metadata for station {station_id}")
         return _station_cache[station_id]
 
-    url = f"https://api.weather.com/v2/pws/observations/current"
+    url = "https://api.weather.com/v2/pws/observations/current"
     params = {
         "stationId": station_id,
         "format": "json",

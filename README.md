@@ -1,17 +1,20 @@
 # Weather Station Data Bridge
 
-A lightweight Python application that fetches weather data from WeatherUnderground stations and forwards it to Windy.com every 5 minutes.
+A lightweight Python application that fetches weather data from Weather Underground stations and forwards it to Windy.com every 5 minutes, with accurate unit conversions and precipitation tracking.
 
 ## 📚 Documentation
 
 - **[Quick Start Guide](QUICKSTART.md)** - Get running in 5 minutes
 - **[Architecture Guide](ARCHITECTURE.md)** - Design philosophy and patterns
 - **[Project Summary](SUMMARY.md)** - Complete feature overview
+- **[Precipitation Tracking](PRECIPITATION_TRACKING.md)** - How hourly precipitation calculation works
 
 ## Features
 
+### Core Functionality
+
 - ✅ Fetches real-time weather data from multiple Weather Underground stations
-- ✅ Transforms and forwards data to Windy.com
+- ✅ Transforms and forwards data to Windy.com with accurate unit conversions
 - ✅ Configurable sync intervals (default: 5 minutes)
 - ✅ Automatic retry with exponential backoff
 - ✅ Timestamp deduplication to prevent duplicate API submissions
@@ -21,18 +24,55 @@ A lightweight Python application that fetches weather data from WeatherUndergrou
 - ✅ Graceful shutdown handling
 - ✅ Low resource usage (<128MB memory, <0.5 CPU cores)
 
+### Data Quality & Accuracy
+
+- ✅ **Correct wind speed conversion** (km/h → m/s) - fixes Weather Underground's metric units
+- ✅ **Hourly precipitation tracking** - calculates deltas from WU's daily cumulative totals
+- ✅ **Midnight reset detection** - handles daily precipitation reset gracefully
+- ✅ **Per-station tracking** - independent precipitation history for each station
+- ✅ **UV index as integer** - proper format as required by Windy API
+
 ## Architecture
 
 Built using functional composition (no OOP), following DRY and KISS principles:
 
 - **config.py**: Configuration loading from environment variables
-- **wu_client.py**: Weather Underground API client
-- **transformer.py**: Data transformation (WU → Windy format)
+- **wu_client.py**: Weather Underground API client (fetches raw data)
+- **transformer.py**: ALL data transformations (wind conversion, precipitation tracking, UV conversion)
 - **windy_client.py**: Windy API client
 - **orchestrator.py**: Sync orchestration with concurrency control
 - **scheduler.py**: Task scheduling
 - **health.py**: Health check HTTP endpoint
 - **retry.py**: Retry logic with exponential backoff
+
+### Data Transformation Details
+
+**All transformations happen in `transformer.py`** for consistency (KISS principle: single place for all data quality logic).
+
+#### Wind Speed Conversion
+
+Weather Underground's metric API returns wind speeds in **km/h**, but Windy expects **m/s**.
+
+- **Where**: `wu_client.py` fetches raw km/h → `transformer.py` converts to m/s
+- **Formula**: `wind_speed_kmh / 3.6 = wind_speed_mps`
+- **Example**: 18 km/h → 5 m/s ✓
+
+#### Precipitation Tracking
+
+Weather Underground provides **daily cumulative totals**, but Windy expects **hourly precipitation**.
+
+- **Where**: `transformer.py`
+- Maintains in-memory cache of previous readings per station
+- Calculates hourly delta: `current_total - previous_total`
+- Detects midnight reset (when daily total resets to 0)
+- Returns None for first reading or after midnight reset (conservative approach)
+
+#### UV Index
+
+Converts UV index from float to integer as required by Windy API.
+
+- **Where**: `transformer.py`
+- **Example**: 5.7 → 5 (truncated to integer)
 
 ## Requirements
 
@@ -169,7 +209,16 @@ uv sync --group dev
 ### Run tests
 
 ```bash
+# Run all tests (30 tests)
 uv run pytest
+
+# Run with verbose output
+uv run pytest -v
+
+# Run specific test suites
+uv run pytest tests/test_bug_fixes.py         # Bug fix verification
+uv run pytest tests/test_precipitation_tracking.py  # Precipitation tracking
+uv run pytest tests/test_transformer.py       # Data transformation
 ```
 
 ### Run linting
@@ -183,6 +232,16 @@ uv run ruff check src/
 ```bash
 uv run mypy src/
 ```
+
+### Test Coverage
+
+The project includes comprehensive tests covering:
+
+- **Bug fixes** (5 tests): Wind speed conversion, precipitation, UV index
+- **Precipitation tracking** (11 tests): Hourly calculation, midnight reset, edge cases
+- **Data transformation** (3 tests): Format conversion, validation
+- **Configuration** (7 tests): Config loading, validation
+- **Models** (4 tests): Pydantic model validation
 
 ## Project Structure
 
@@ -239,7 +298,22 @@ MIT
 - **[QUICKSTART.md](QUICKSTART.md)** - Step-by-step setup instructions
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - Technical design and patterns
 - **[SUMMARY.md](SUMMARY.md)** - Complete project overview
+- **[PRECIPITATION_TRACKING.md](PRECIPITATION_TRACKING.md)** - Precipitation tracking implementation details
 - **[layereddsl.yml](layereddsl.yml)** - Formal architecture specification
+
+## Data Quality Notes
+
+### Important: Wind Speed Data
+
+If you have historical wind speed data stored from previous versions, note that wind speeds were incorrectly reported **3.6× too high** before the fix. To correct historical data, divide stored wind speeds by 3.6.
+
+### Precipitation Tracking Behavior
+
+- **First reading**: Returns `None` (no previous data to calculate hourly delta)
+- **After midnight reset**: Returns `None` (conservative approach to avoid incorrect calculations)
+- **Cache lifetime**: In-memory only - cleared on application restart
+
+For detailed technical documentation on precipitation tracking, see [PRECIPITATION_TRACKING.md](PRECIPITATION_TRACKING.md).
 
 ## Author
 

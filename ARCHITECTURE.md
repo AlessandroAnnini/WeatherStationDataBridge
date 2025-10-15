@@ -28,12 +28,12 @@ This application follows **functional composition** principles instead of object
 
 ## Module Organization
 
-```
+```text
 weatherstationdatabridge/
 ├── models.py          # Domain models and exceptions
 ├── config.py          # Configuration loading
-├── wu_client.py       # Weather Underground API
-├── transformer.py     # Data transformation
+├── wu_client.py       # Weather Underground API (raw data fetch)
+├── transformer.py     # ALL data transformations (wind, precipitation, UV)
 ├── windy_client.py    # Windy API
 ├── retry.py           # Retry logic
 ├── orchestrator.py    # Sync orchestration
@@ -44,7 +44,7 @@ weatherstationdatabridge/
 
 ## Data Flow
 
-```
+```text
 1. Configuration Loading (config.py)
    └─> Environment Variables → Configuration object
 
@@ -53,9 +53,9 @@ weatherstationdatabridge/
 
 3. Sync Cycle (orchestrator.py)
    ├─> For each station (concurrent, max 2):
-   │   ├─> Fetch WU Data (wu_client.py)
+   │   ├─> Fetch Raw WU Data (wu_client.py)
    │   ├─> Check Last Sent Timestamp (deduplication)
-   │   ├─> Transform Data (transformer.py)
+   │   ├─> Transform Data: Convert Wind + Track Precipitation + Convert UV (transformer.py)
    │   └─> Send to Windy with Retry (windy_client.py + retry.py)
    └─> Return Sync Results
 
@@ -131,7 +131,7 @@ _last_sent_timestamps[station_id] = observation.timestamp
 - **Handles stale data gracefully**: Weather stations with slow reporting (15+ min intervals) are handled efficiently
 - **Simple & stateless**: No persistence needed; acceptable to resend after app restart
 
-### Behavior
+### Deduplication Flow
 
 ```mermaid
 graph TD
@@ -140,6 +140,92 @@ graph TD
     B -->|No| D["Send to Windy"]
     D --> E["Update Last Sent"]
 ```
+
+## Precipitation Tracking
+
+Weather Underground provides **daily cumulative precipitation totals**, but Windy expects **hourly precipitation**. The transformer maintains an in-memory cache to calculate hourly deltas.
+
+### Mechanism
+
+```python
+_precipitation_cache: dict[str, tuple[datetime, Optional[float], Optional[float]]] = {}
+
+def calculate_hourly_precipitation(station_id, current_timestamp, current_precip_mm, current_precip_in):
+    # First reading: store and return None
+    if station_id not in _precipitation_cache:
+        _precipitation_cache[station_id] = (current_timestamp, current_precip_mm, current_precip_in)
+        return None, None
+
+    # Get previous values
+    prev_timestamp, prev_mm, prev_in = _precipitation_cache[station_id]
+
+    # Detect midnight reset (daily total decreases)
+    if current_precip_mm < prev_mm:
+        _precipitation_cache[station_id] = (current_timestamp, current_precip_mm, current_precip_in)
+        return None, None  # Conservative: skip after reset
+
+    # Calculate hourly delta
+    hourly_mm = current_precip_mm - prev_mm
+    hourly_in = current_precip_in - prev_in
+
+    # Update cache and return
+    _precipitation_cache[station_id] = (current_timestamp, current_precip_mm, current_precip_in)
+    return hourly_mm, hourly_in
+```
+
+### Benefits
+
+- **Accurate hourly data**: Converts daily totals to hourly precipitation
+- **Midnight reset detection**: Handles daily counter reset gracefully
+- **Per-station tracking**: Independent history for each weather station
+- **Simple & stateless**: In-memory cache, acceptable to reset on restart
+- **Conservative approach**: Returns None for first reading and after midnight reset
+
+### Precipitation Calculation Flow
+
+```mermaid
+graph TD
+    A["Fetch Current Total"] --> B{"Station in\nCache?"}
+    B -->|No| C["Store in Cache\nReturn None"]
+    B -->|Yes| D{"Current <\nPrevious?"}
+    D -->|Yes| E["Midnight Reset\nUpdate Cache\nReturn None"]
+    D -->|No| F["Calculate Delta\nUpdate Cache\nReturn Hourly"]
+```
+
+## Data Quality Transformations
+
+All data quality transformations happen in `transformer.py` for consistency and maintainability.
+
+### Wind Speed Conversion
+
+Weather Underground's metric API returns wind speeds in **km/h**, but Windy expects **m/s**.
+
+```python
+# In transformer.py
+wind_speed_mps = None
+if observation.wind_speed_kmh is not None:
+    wind_speed_mps = observation.wind_speed_kmh / 3.6
+
+wind_gust_mps = None
+if observation.wind_gust_kmh is not None:
+    wind_gust_mps = observation.wind_gust_kmh / 3.6
+```
+
+**Conversion factor**: 1 m/s = 3.6 km/h
+**Location**: `transformer.py` (alongside other transformations)
+
+### UV Index Conversion
+
+Windy expects UV index as an **integer**, but Weather Underground provides a **float**.
+
+```python
+# In transformer.py
+uv_value = None
+if observation.uv_index is not None:
+    uv_value = int(observation.uv_index)  # Truncate to integer
+```
+
+**Location**: `transformer.py` (alongside other transformations)
 
 ## Concurrency Model
 
@@ -190,12 +276,27 @@ config = Configuration(
 - Test individual functions
 - Mock external dependencies
 - Test error conditions
+- Verify data transformations (wind speed, precipitation, UV index)
+
+**Test Coverage (30 tests):**
+
+- Configuration tests (7 tests)
+- Model validation (4 tests)
+- Transformer tests (3 tests)
+- Bug fix verification (5 tests)
+- Precipitation tracking (11 tests)
 
 ### Integration Tests
 
 - Use `test-sync` command
 - Test with real (or mocked) APIs
 - Verify end-to-end flow
+
+### Data Quality Tests
+
+- **Wind speed conversion**: Verify km/h → m/s (÷ 3.6)
+- **Precipitation tracking**: Test first reading, normal increase, midnight reset, edge cases
+- **UV index**: Verify float → integer conversion
 
 ## Performance Characteristics
 
@@ -205,6 +306,7 @@ config = Configuration(
 - Streaming data processing
 - Station metadata cached
 - Timestamp deduplication (~50 bytes per station)
+- Precipitation tracking cache (~100 bytes per station)
 - **Target**: <128MB
 
 ### CPU Usage
@@ -264,14 +366,14 @@ config = Configuration(
 
 ## Why No OOP?
 
-### Problems with OOP for this use case:
+### Problems with OOP for this use case
 
 - **Unnecessary abstraction**: No complex state to encapsulate
 - **Hidden dependencies**: Methods access instance variables
 - **Testing complexity**: Mocking objects harder than functions
 - **Cognitive overhead**: Understanding class hierarchies
 
-### Benefits of functional approach:
+### Benefits of functional approach
 
 - **Explicit dependencies**: All inputs are parameters
 - **Easy testing**: Mock functions, not objects
@@ -280,7 +382,7 @@ config = Configuration(
 
 ## Comparison
 
-### OOP Approach (What we avoided)
+### OOP Approach - What we avoided
 
 ```python
 class WeatherSyncService:
@@ -294,7 +396,7 @@ class WeatherSyncService:
         pass
 ```
 
-### Functional Approach (What we use)
+### Functional Approach - What we use
 
 ```python
 def sync_station(station_id, wu_api_key, windy_api_key, ...):
@@ -309,8 +411,9 @@ def sync_station(station_id, wu_api_key, windy_api_key, ...):
 This architecture achieves:
 
 - ✅ **Simplicity**: Easy to understand and modify
-- ✅ **Testability**: Pure functions are easy to test
+- ✅ **Testability**: Pure functions are easy to test (30 tests covering all data transformations)
 - ✅ **Reliability**: Explicit error handling at every level
 - ✅ **Performance**: Async I/O with controlled concurrency
 - ✅ **Maintainability**: Small, focused modules
 - ✅ **Deployability**: Containerized with health checks
+- ✅ **Data Quality**: Accurate unit conversions and precipitation tracking with comprehensive validation
