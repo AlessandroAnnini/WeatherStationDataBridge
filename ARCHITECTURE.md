@@ -108,26 +108,41 @@ run_scheduler(sync_executor, config.sync_interval_minutes)
 
 ## Timestamp Deduplication
 
-To prevent duplicate API submissions and unnecessary warnings, the orchestrator maintains an in-memory cache of the last sent observation timestamp per station.
+To prevent duplicate API submissions and unnecessary warnings, the orchestrator maintains an in-memory cache of observation timestamps per station.
 
 ### Mechanism
 
 ```python
 _last_sent_timestamps: dict[str, datetime] = {}
 
-# Before sending
+# Check if timestamp already seen
 if _last_sent_timestamps.get(station_id) == observation.timestamp:
     logger.info(f"Skipping station {station_id}: observation already sent")
     return  # Skip sending
 
-# After successful send
+# Mark timestamp as seen BEFORE attempting send
+# This prevents retrying the same timestamp on failure
 _last_sent_timestamps[station_id] = observation.timestamp
+
+# ... transform and send ...
 ```
+
+### Key Behavior
+
+**Timestamps are cached BEFORE the send attempt**, not after. This ensures:
+
+1. **First encounter**: Cache timestamp → attempt send
+2. **If send succeeds**: No retry needed (already cached)
+3. **If send fails**: Timestamp already cached → won't retry same observation
+4. **Next cycle**: Same timestamp detected → skipped with INFO log
+5. **New data**: New timestamp → attempt send
+
+This prevents wasting retry attempts on observations that will never succeed (e.g., "timestamp already present" errors from Windy).
 
 ### Benefits
 
 - **Prevents duplicate warnings**: Eliminates "timestamp already present" errors from Windy API
-- **Reduces API calls**: Skips submissions when weather station hasn't reported new data
+- **Reduces wasted retries**: Doesn't retry observations that already failed
 - **Handles stale data gracefully**: Weather stations with slow reporting (15+ min intervals) are handled efficiently
 - **Simple & stateless**: No persistence needed; acceptable to resend after app restart
 
@@ -135,10 +150,14 @@ _last_sent_timestamps[station_id] = observation.timestamp
 
 ```mermaid
 graph TD
-    A["Fetch Observation"] --> B{"Last Sent\n== Current?"}
+    A["Fetch Observation"] --> B{"Timestamp\nAlready Cached?"}
     B -->|Yes| C["Skip Send\n(INFO log)"]
-    B -->|No| D["Send to Windy"]
-    D --> E["Update Last Sent"]
+    B -->|No| D["Cache Timestamp"]
+    D --> E["Transform Data"]
+    E --> F["Send to Windy"]
+    F -->|Success| G["Complete"]
+    F -->|Failure| H["Error Logged\n(Timestamp Cached)"]
+    H --> I["Next Cycle:\nTimestamp Cached\n→ Skip"]
 ```
 
 ## Precipitation Tracking

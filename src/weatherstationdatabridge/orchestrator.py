@@ -55,6 +55,10 @@ async def sync_station(
                 observations_sent=0,
             )
 
+        # Mark timestamp as seen before attempting send
+        # This prevents retrying the same timestamp on failure
+        _last_sent_timestamps[station_id] = observation.timestamp
+
         # Transform to Windy format (station_index is just for internal tracking, not used by API)
         windy_obs = transform_to_windy_format(observation, 0)
         logger.debug(f"Transformed observation for {station_id}")
@@ -73,9 +77,6 @@ async def sync_station(
         logger.info(
             f"Successfully synced station {station_id} → Windy {windy_station_id}"
         )
-
-        # Update last sent timestamp
-        _last_sent_timestamps[station_id] = observation.timestamp
 
         return SyncResult(
             station_id=station_id,
